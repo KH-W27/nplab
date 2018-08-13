@@ -18,6 +18,7 @@ from PIL import Image
 import warnings
 import pyqtgraph as pg
 from weakref import WeakSet
+from functools import partial
 
 from nplab.instrument import Instrument
 from nplab.utils.notified_property import NotifiedProperty, DumbNotifiedProperty, register_for_property_changes
@@ -602,10 +603,41 @@ class CameraPreviewWidget(pg.GraphicsView):
         for item in self.crosshair.values():
             self.view_box.addItem(item)
         self._image_shape = ()
+        
+        range_menu = self.view_box.menu.addMenu("Range")
+        for label, value in {"Auto":None, "0-1":(0, 1), "0-255":(0, 255)}.items():
+            action = range_menu.addAction(label)
+            action.triggered.connect(partial(self._set_range, value))
 
         # We want to make sure we always update the data in the GUI thread.
         # This is done using the signal/slot mechanism
         self.update_data_signal.connect(self.update_widget, type=QtCore.Qt.QueuedConnection)
+
+    _value_range = None
+    @property
+    def value_range(self):
+        """The range of values displayed in the image.  None means auto-range"""
+        return self._value_range
+    @value_range.setter
+    def value_range(self, new_range):
+        if new_range is None:
+            self._value_range = None
+        else:
+            try:
+                vmin, vmax = tuple(new_range)
+                self._value_range = (vmin, vmax)
+                self.image_item.setLevels((vmin, vmax))
+            except:
+                raise ValueError("Range should be None or a tuple of length 2")
+    
+    @property
+    def autorange(self):
+        """Whether the image view autoranges"""
+        return self.value_range is None
+
+    def _set_range(self, value):
+        """Set the minimum and maximum values displayed"""
+        self.value_range = value
 
     def update_widget(self, newimage):
         """Set the image, but do so in the Qt main loop to avoid threading nasties."""
@@ -620,9 +652,9 @@ class CameraPreviewWidget(pg.GraphicsView):
         elif len(newimage.shape)==3:
             newimage = newimage.transpose((1,0,2))
         if newimage.dtype =="uint8":
-            self.image_item.setImage(newimage, autoLevels=False)
+            self.image_item.setImage(newimage, autoLevels=self.autorange)
         else:
-            self.image_item.setImage(newimage.astype(float))
+            self.image_item.setImage(newimage.astype(float), autoLevels=self.autorange)
         if newimage.shape != self._image_shape:
             self._image_shape = newimage.shape
             self.set_crosshair_centre((newimage.shape[1]/2.0, newimage.shape[0]/2.0))
